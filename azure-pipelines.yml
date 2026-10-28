@@ -1,0 +1,115 @@
+trigger:
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - terraform/*
+    - scripts/*
+    - .azuredevops/*
+    - azure-pipelines.yml
+
+pr: none
+
+variables:
+- group: epicbook-db-secrets
+
+- name: ADMIN_CIDR
+  value: '105.117.6.59/32'
+
+pool:
+  name: SelfHostedPool
+  demands:
+  - Agent.Name -equals vm-epicbook-agent
+
+stages:
+- stage: Validate
+  displayName: Validate Terraform
+  jobs:
+  - job: Validate
+    steps:
+    - checkout: self
+      clean: true
+      persistCredentials: false
+
+    - template: .azuredevops/terraform-task.yml
+      parameters:
+        action: validate
+
+- stage: Plan
+  displayName: Create reviewed Terraform plan
+  dependsOn: Validate
+  jobs:
+  - job: Plan
+    steps:
+    - checkout: self
+      clean: true
+      persistCredentials: false
+
+    - template: .azuredevops/terraform-task.yml
+      parameters:
+        action: plan
+        planFile: $(Build.ArtifactStagingDirectory)/terraform-plan/epicbook.tfplan
+
+    - task: PublishPipelineArtifact@1
+      displayName: Transfer saved plan only
+      inputs:
+        targetPath: $(Build.ArtifactStagingDirectory)/terraform-plan/epicbook.tfplan
+        artifact: terraform-plan
+
+- stage: Review
+  displayName: Approve reviewed plan
+  dependsOn: Plan
+  jobs:
+  - job: WaitForApproval
+    pool: server
+    timeoutInMinutes: 1500
+    steps:
+    - task: ManualValidation@1
+      timeoutInMinutes: 1440
+      inputs:
+        notifyUsers: ''
+        allowApproversToApproveTheirOwnRuns: true
+        instructions: |
+          Review this run's Terraform Plan log.
+          Confirm the region, VM sizes, SSH sources, private MySQL,
+          resource changes, and expected costs.
+          Resume only to approve applying this same saved plan.
+        onTimeout: reject
+
+- stage: Apply
+  displayName: Apply approved saved plan
+  dependsOn: Review
+  jobs:
+  - job: Apply
+    timeoutInMinutes: 120
+    steps:
+    - checkout: self
+      clean: true
+      persistCredentials: false
+
+    - task: DownloadPipelineArtifact@2
+      displayName: Download this run's reviewed plan
+      inputs:
+        buildType: current
+        artifactName: terraform-plan
+        targetPath: $(Pipeline.Workspace)/terraform-plan
+
+    - template: .azuredevops/terraform-task.yml
+      parameters:
+        action: apply
+        planFile: $(Pipeline.Workspace)/terraform-plan/epicbook.tfplan
+
+- stage: Outputs
+  displayName: Display non-sensitive handoff outputs
+  dependsOn: Apply
+  jobs:
+  - job: Outputs
+    steps:
+    - checkout: self
+      clean: true
+      persistCredentials: false
+
+    - template: .azuredevops/terraform-task.yml
+      parameters:
+        action: outputs

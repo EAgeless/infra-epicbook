@@ -1,0 +1,24 @@
+parameters:
+- name: action
+  type: string
+
+- name: planFile
+  type: string
+  default: ''
+
+steps:
+- task: AzureCLI@2
+  displayName: 'Terraform: ${{ parameters.action }}'
+  inputs:
+    azureSubscription: azure-epicbook-connection
+    scriptType: bash
+    scriptLocation: inlineScript
+    addSpnToEnvironment: true
+    workingDirectory: $(Build.SourcesDirectory)
+    inlineScript: |
+      bash scripts/terraform-ci.sh '${{ parameters.action }}'
+  env:
+    PLAN_FILE: ${{ parameters.planFile }}
+    TF_VAR_admin_cidr: $(ADMIN_CIDR)
+    TF_VAR_mysql_admin_username: $(MYSQL_ADMIN_USERNAME)
+    TF_VAR_mysql_admin_password: $(MYSQL_ADMIN_PASSWORD)
